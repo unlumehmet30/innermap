@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
-
-// PAKET YOLLARI DÜZELTİLDİ
 import 'package:innermap/core/services/recording_services.dart';
-import 'package:innermap/core/services/http_services.dart'; 
+import 'package:innermap/core/services/http_services.dart';
+import 'package:innermap/models/concept_edge.dart';
+import 'package:innermap/models/concept_node.dart';
+import 'package:innermap/screens/map_screen.dart'; // Navigasyon için eklendi
 
 
 class HomeScreen extends StatefulWidget {
@@ -13,18 +14,43 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  // Servis örnekleri
   final RecordingService _recordingService = RecordingService();
   final HttpService _httpService = HttpService();
-  
-  // Metin girişi için Controller
   final TextEditingController _textController = TextEditingController();
 
   // --- Durum Yönetimi ---
-  bool _isRecording = false; // Kayıt durumu
-  bool _isProcessing = false; // İşlemde olma durumu (backend bekleniyor)
+  bool _isRecording = false; 
+  bool _isProcessing = false; 
   String _recognizedText =
       "Lütfen fikrinizi sesli veya yazılı olarak paylaşın..."; 
+
+  // --- Yardımcı Fonksiyon: Veriyi Çözümle ve Harita Ekranına Yönlendir ---
+  void _navigateToMap(Map<String, dynamic> data) {
+    
+    // JSON listelerini Dart modellerine çevir
+    final List<ConceptNode> nodes = (data['nodes'] as List)
+        .map((item) => ConceptNode.fromJson(item as Map<String, dynamic>))
+        .toList();
+    
+    final List<ConceptEdge> edges = (data['edges'] as List)
+        .map((item) => ConceptEdge.fromJson(item as Map<String, dynamic>))
+        .toList();
+
+    // Harita ekranına yönlendir ve veriyi gönder
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => MapScreen(nodes: nodes, edges: edges),
+      ),
+    );
+    
+    // Yönlendirme sonrası ekran durumunu sıfırla
+    setState(() {
+      _isProcessing = false;
+      _recognizedText = "Analiz tamamlandı. Sonuç Harita ekranında.";
+    });
+  }
+
 
   // 1. Ses Kaydını Başlat/Durdur
   void _toggleRecording() async {
@@ -32,11 +58,10 @@ class _HomeScreenState extends State<HomeScreen> {
 
     if (!_isRecording) {
       // KAYDI BAŞLAT
+      // ... (Kayıt başlatma mantığı aynı kalır)
       final hasPermission = await _recordingService.checkPermission();
       if (!hasPermission) {
-        setState(() {
-          _recognizedText = "Hata: Mikrofon izni gereklidir.";
-        });
+        setState(() { _recognizedText = "Hata: Mikrofon izni gereklidir."; });
         return;
       }
       
@@ -44,9 +69,7 @@ class _HomeScreenState extends State<HomeScreen> {
       
       setState(() {
         _isRecording = true;
-        _recognizedText = filePath != null
-            ? "Dinliyorum... Konuşun."
-            : "Kayıt başlatılamadı.";
+        _recognizedText = filePath != null ? "Dinliyorum... Konuşun." : "Kayıt başlatılamadı.";
       });
 
     } else {
@@ -60,17 +83,34 @@ class _HomeScreenState extends State<HomeScreen> {
       final filePath = await _recordingService.stopRecording();
       
       if (filePath != null) {
-        // Backend'e Gönderme
-        final response = await _httpService.uploadAudioForTranscription(filePath);
+        // Backend'e Gönderme (Şimdilik Transkripsiyon Alınıyor)
+        final transcriptionResponse = await _httpService.uploadAudioForTranscription(filePath);
+        
+        // 🚨 YENİ MANTIK: Transkripsiyon metnini LLM'e gönderme
+        if (transcriptionResponse != null && transcriptionResponse.containsKey('transcript')) {
+            final transcript = transcriptionResponse['transcript'] as String;
+            
+            // LLM analizini başlat
+            final llmAnalysisData = await _httpService.sendTextForAnalysis(transcript);
 
-        setState(() {
-          _isProcessing = false;
-          // Backend'den gelen anahtar 'transcript' olmalı
-          _recognizedText = response != null && response.containsKey('transcript')
-              ? response['transcript'] 
-              : "Analiz tamamlandı, ancak backend'den geçerli bir metin gelmedi. (Kontrol edin)";
-        });
+            if (llmAnalysisData != null) {
+                // Başarılı: Harita ekranına yönlendir
+                _navigateToMap(llmAnalysisData);
+            } else {
+                // LLM'den hata geldi
+                setState(() {
+                    _isProcessing = false;
+                    _recognizedText = "Hata: LLM Analizi başarısız oldu.";
+                });
+            }
 
+        } else {
+            // Transkripsiyon hatası
+            setState(() {
+                _isProcessing = false;
+                _recognizedText = "Kayıt veya Transkripsiyon hatası.";
+            });
+        }
       } else {
         setState(() {
           _isProcessing = false;
@@ -89,24 +129,24 @@ class _HomeScreenState extends State<HomeScreen> {
       _recognizedText = "Yazılı metin alındı. Analiz ediliyor...";
     });
 
-    final response = await _httpService.sendTextForAnalysis(text);
+    final llmAnalysisData = await _httpService.sendTextForAnalysis(text);
 
-    setState(() {
-      _isProcessing = false;
-      _textController.clear();
-      
-      // Varsayım: Metin analizinde 'analysis' anahtarı dönecek
-      _recognizedText = response != null && response.containsKey('analysis')
-          ? response['analysis']
-          : "Yazılı metin analizi tamamlandı. (Backend'de /analyze_text uç noktasını tanımlayın)";
-    });
+    if (llmAnalysisData != null) {
+        _navigateToMap(llmAnalysisData);
+        _textController.clear();
+    } else {
+        setState(() {
+            _isProcessing = false;
+            _recognizedText = "Hata: LLM Analizi başarısız oldu.";
+        });
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Innermap - Fikir Girişi'),
+        title: const Text('Mind Map MVP - Fikir Girişi'),
         centerTitle: true,
       ),
       body: Padding(
@@ -132,7 +172,7 @@ class _HomeScreenState extends State<HomeScreen> {
             const SizedBox(height: 24),
 
             const Text(
-              "Yapay Zeka Analizi:",
+              "Sistem Durumu/Geri Bildirim:",
               style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
             ),
 
@@ -180,7 +220,7 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
       ),
 
-      // Alt Navigasyon Çubuğu (1. Hafta Gerekliliği)
+      // Alt Navigasyon Çubuğu
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: 0, 
         items: const [
@@ -189,7 +229,7 @@ class _HomeScreenState extends State<HomeScreen> {
           BottomNavigationBarItem(icon: Icon(Icons.history), label: 'Geçmiş'),
         ],
         onTap: (index) {
-          // Sayfa Yönlendirmeleri buraya gelecek
+          // İleride Sayfa Yönlendirmeleri Buraya Gelecek
         },
       ),
     );
