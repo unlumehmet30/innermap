@@ -1,31 +1,33 @@
-// lib/screens/home_screen.dart (GERÇEK LLM ÇAĞRISI)
-
 import 'package:flutter/material.dart';
 import 'package:innermap/core/services/recording_services.dart';
-import 'package:innermap/core/services/http_services.dart';
+// import 'package:innermap/core/services/http_service.dart'; // LLM/HTTP Servisi atlanıyor
+import 'package:innermap/core/constant/mock_data.dart'; // Mock veri eklendi
 import 'package:innermap/models/concept_edge.dart';
 import 'package:innermap/models/concept_node.dart';
 import 'package:innermap/screens/map_screen.dart'; 
 
-class HomeScreen extends StatefulWidget {
-  const HomeScreen({super.key});
+
+class HomeScreenMock extends StatefulWidget {
+  // Projenizdeki gerçek HomeScreen'den ayırt etmek için adını Mock olarak değiştirdik
+  const HomeScreenMock({super.key});
 
   @override
-  State<HomeScreen> createState() => _HomeScreenState();
+  State<HomeScreenMock> createState() => _HomeScreenMockState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenMockState extends State<HomeScreenMock> {
   final RecordingService _recordingService = RecordingService();
-  final HttpService _httpService = HttpService();
   final TextEditingController _textController = TextEditingController();
 
   // --- Durum Yönetimi ---
   bool _isRecording = false; 
   bool _isProcessing = false; 
-  String _recognizedText = "Lütfen fikrinizi sesli veya yazılı olarak paylaşın..."; 
+  String _recognizedText =
+      "Lütfen fikrinizi sesli veya yazılı olarak paylaşın (Simülasyon Aktif)..."; 
 
   // --- Yardımcı Fonksiyon: Veriyi Çözümle ve Harita Ekranına Yönlendir ---
   void _navigateToMap(Map<String, dynamic> data) {
+    
     // JSON listelerini Dart modellerine çevir
     final List<ConceptNode> nodes = (data['nodes'] as List)
         .map((item) => ConceptNode.fromJson(item as Map<String, dynamic>))
@@ -46,12 +48,12 @@ class _HomeScreenState extends State<HomeScreen> {
     // Yönlendirme sonrası ekran durumunu sıfırla
     setState(() {
       _isProcessing = false;
-      _recognizedText = "Analiz tamamlandı. Sonuç Harita ekranında.";
+      _recognizedText = "Simülasyon tamamlandı. Sonuç Harita ekranında.";
     });
   }
 
 
-  // 1. Ses Kaydını Başlat/Durdur (GERÇEK LLM AKIŞI)
+  // 1. Ses Kaydını Başlat/Durdur (MOCK AKIŞI)
   void _toggleRecording() async {
     if (_isProcessing) return; 
 
@@ -62,76 +64,51 @@ class _HomeScreenState extends State<HomeScreen> {
       
       setState(() {
         _isRecording = true;
-        _recognizedText = filePath != null ? "Dinliyorum..." : "Hata.";
+        _recognizedText = filePath != null ? "Dinliyorum... Konuşun (MOCK)..." : "Hata.";
       });
 
     } else {
-      // KAYDI DURDUR, LLM'E GÖNDER
+      // KAYDI DURDUR ve SİMÜLASYON YAP
       setState(() {
         _isRecording = false;
         _isProcessing = true;
-        _recognizedText = "Ses kaydı tamamlandı. Metin analiz ediliyor...";
+        _recognizedText = "Ses kaydı tamamlandı. LLM Simülasyonu başlatılıyor...";
       });
 
-      final filePath = await _recordingService.stopRecording();
+      // Kayıt durdurulur
+      await _recordingService.stopRecording();
       
-      if (filePath != null) {
-        final transcriptionResponse = await _httpService.uploadAudioForTranscription(filePath);
-        
-        if (transcriptionResponse != null && transcriptionResponse.containsKey('transcript')) {
-            final transcript = transcriptionResponse['transcript'] as String;
-            
-            // LLM analizini başlat
-            final llmAnalysisData = await _httpService.sendTextForAnalysis(transcript);
+      // Simülasyon bekleme süresi
+      await Future.delayed(const Duration(seconds: 1)); 
 
-            if (llmAnalysisData != null) {
-                // Başarılı: Harita ekranına yönlendir
-                _navigateToMap(llmAnalysisData);
-            } else {
-                setState(() {
-                    _isProcessing = false;
-                    _recognizedText = "Hata: LLM Analizi başarısız oldu.";
-                });
-            }
-
-        } else {
-            setState(() {
-                _isProcessing = false;
-                _recognizedText = "Transkripsiyon hatası.";
-            });
-        }
-      } 
+      // 🚨 KRİTİK: Sabit Mock verisi ile Harita ekranına yönlendir
+      _navigateToMap(mockMapData); 
+      
     }
   }
 
-  // 2. Metin Girişini Onayla (GERÇEK LLM AKIŞI)
+  // 2. Metin Girişini Onayla (MOCK AKIŞI)
   void _processText(String text) async {
     if (text.trim().isEmpty || _isRecording || _isProcessing) return;
 
     setState(() {
       _isProcessing = true;
-      _recognizedText = "Yazılı metin alındı. Analiz ediliyor...";
+      _recognizedText = "Yazılı metin alındı. LLM Simülasyonu başlatılıyor...";
     });
 
-    final llmAnalysisData = await _httpService.sendTextForAnalysis(text);
+    // Simülasyon bekleme süresi
+    await Future.delayed(const Duration(milliseconds: 500)); 
 
-    if (llmAnalysisData != null) {
-        _navigateToMap(llmAnalysisData);
-        _textController.clear();
-    } else {
-        setState(() {
-            _isProcessing = false;
-            _recognizedText = "Hata: LLM Analizi başarısız oldu.";
-        });
-    }
+    // 🚨 KRİTİK: Sabit Mock verisi ile Harita ekranına yönlendir
+    _navigateToMap(mockMapData); 
+    _textController.clear();
   }
 
-  // ... (Geri kalan build metodu aynı kalır)
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Mind Map MVP - Fikir Girişi'),
+        title: const Text('Mind Map MVP - Fikir Girişi (MOCK)'),
         centerTitle: true,
       ),
       body: Padding(
@@ -143,7 +120,7 @@ class _HomeScreenState extends State<HomeScreen> {
             TextField(
               controller: _textController,
               decoration: InputDecoration(
-                labelText: 'Fikrinizi buraya yazın...',
+                labelText: 'Fikrinizi buraya yazın (MOCK Testi)...',
                 suffixIcon: IconButton(
                   icon: const Icon(Icons.send),
                   onPressed: () => _processText(_textController.text),
@@ -198,7 +175,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
           label: Text(_isProcessing 
               ? "İşleniyor..."
-              : (_isRecording ? "Kaydı Durdur" : "Konuşmaya Başla")),
+              : (_isRecording ? "Kaydı Durdur" : "Konuşmaya Başla (MOCK)")),
           icon: Icon(_isProcessing 
               ? Icons.hourglass_top 
               : (_isRecording ? Icons.stop : Icons.mic)),
