@@ -1,10 +1,14 @@
-// lib/screens/map_screen.dart (Force-Directed Layout ile Sürekli Hareket)
+// lib/screens/map_screen.dart
 
 import 'package:flutter/material.dart';
 import 'package:innermap/models/concept_edge.dart';
 import 'package:innermap/models/concept_node.dart';
+import 'package:innermap/core/services/storage_service.dart';
+import 'package:innermap/models/map_entry.dart';
 import 'dart:math';
+import 'dart:convert';
 
+// --- MAPSCREEN: StatefulWidget ve InteractiveViewer İle Etkileşim ---
 class MapScreen extends StatefulWidget {
   final List<ConceptNode> nodes;
   final List<ConceptEdge> edges;
@@ -21,20 +25,20 @@ class MapScreen extends StatefulWidget {
 
 class _MapScreenState extends State<MapScreen> with SingleTickerProviderStateMixin {
   final Map<String, Offset> _nodePositions = {};
-  final Map<String, Offset> _nodeVelocities = {};
-  final Set<String> _pinnedNodes = {}; // Sabitlenen düğümler
   final double _nodeRadius = 40.0;
-  
-  late AnimationController _animationController;
   String? _draggedNodeId;
-  
-  // Fizik parametreleri (Daha sakin hareket için optimize edildi)
-  final double _repulsionStrength = 1000.0;  // 5000 → 1000 (daha az itme)
-  final double _attractionStrength = 0.005;  // 0.01 → 0.005 (daha az çekim)
-  final double _damping = 0.75;              // 0.85 → 0.75 (daha fazla sürtünme)
-  final double _centerForce = 0.0005;        // 0.001 → 0.0005 (daha yumuşak merkeze çekim)
-  
-  // Canvas sınırları
+  double _canvasWidth = 0;
+  double _canvasHeight = 0;
+  final StorageService _storageService = StorageService(); 
+
+  // Fiziksel hareket ve etkileşim için gereken diğer değişkenler
+  final Map<String, Offset> _nodeVelocities = {};
+  final Set<String> _pinnedNodes = {};
+  late AnimationController _animationController;
+  final double _repulsionStrength = 1000.0;
+  final double _attractionStrength = 0.005;
+  final double _damping = 0.75;
+  final double _centerForce = 0.0005;
   double _minX = 0, _maxX = 0, _minY = 0, _maxY = 0;
   final double _padding = 100.0;
   
@@ -43,14 +47,16 @@ class _MapScreenState extends State<MapScreen> with SingleTickerProviderStateMix
   @override
   void initState() {
     super.initState();
+    // Fizik motoru animasyonu
     _animationController = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 32), // 16ms → 32ms (~30 FPS, daha yavaş)
+      duration: const Duration(milliseconds: 32),
     )..addListener(_updatePhysics);
     
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _initializeNodePositions();
-      _animationController.repeat();
+      // Fizik motorunu başlatmak için (istenirse aktif edilebilir)
+      // _animationController.repeat(); 
     });
   }
 
@@ -60,7 +66,8 @@ class _MapScreenState extends State<MapScreen> with SingleTickerProviderStateMix
     _transformController.dispose();
     super.dispose();
   }
-
+  
+  // --- Yardımcı Fonksiyon: Başlangıç Pozisyonlarını Hesaplama (POZİSYON KORUMA) ---
   void _initializeNodePositions() {
     if (!mounted || widget.nodes.isEmpty) return;
 
@@ -68,51 +75,75 @@ class _MapScreenState extends State<MapScreen> with SingleTickerProviderStateMix
     final double screenHeight = MediaQuery.of(context).size.height;
     final double centerX = screenWidth / 2;
     final double centerY = screenHeight / 2;
+    
+    double minX = centerX, maxX = centerX;
+    double minY = centerY, maxY = centerY;
+    int nodeCount = widget.nodes.length - 1;
+    double angleStep = nodeCount > 0 ? 2 * pi / nodeCount : 0; 
+    double radius = 250.0; 
 
     setState(() {
-      // Rastgele başlangıç pozisyonları
-      final Random random = Random();
-      for (final node in widget.nodes) {
-        _nodePositions[node.id] = Offset(
-          centerX + (random.nextDouble() - 0.5) * 200,
-          centerY + (random.nextDouble() - 0.5) * 200,
-        );
-        _nodeVelocities[node.id] = Offset.zero;
+      // KRİTİK: Kayıtlı X/Y'yi öncelikli kullanma mantığı
+      for (int i = 0; i < widget.nodes.length; i++) {
+        final ConceptNode node = widget.nodes[i];
+        
+        Offset position;
+        
+        // 🚨 YÜKLEME MANTIĞI: Eğer Node objesi kayıtlı X ve Y içeriyorsa (Yüklemeden geliyorsa)
+        if (node.x != null && node.y != null) {
+          position = Offset(node.x!, node.y!); // <-- KAYITLI POZİSYONU KULLAN
+        } 
+        // Kayıtlı pozisyon yoksa, Dairesel Yerleşim kullan (İlk kez üretiliyorsa)
+        else if (i == 0) {
+          position = Offset(centerX, centerY);
+        } else {
+          final double angle = i * angleStep;
+          position = Offset(centerX + radius * cos(angle), centerY + radius * sin(angle));
+        }
+
+        _nodePositions[node.id] = position;
+        _nodeVelocities[node.id] = Offset.zero; 
+
+        // Kaydırma alanı için sınırları güncelle
+        minX = min(minX, position.dx);
+        maxX = max(maxX, position.dx);
+        minY = min(minY, position.dy);
+        maxY = max(maxY, position.dy);
       }
       
-      _updateBounds();
+      // Kanvas Boyutunu Hesaplama
+      const double padding = 150.0; 
+      _canvasWidth = max((maxX - minX).abs() + padding, screenWidth);
+      _canvasHeight = max((maxY - minY).abs() + padding, screenHeight);
+      
+      _updateBounds(initial: true);
     });
   }
-
+  
+  // --- FİZİK GÜNCELLEME (Kalan Kod) ---
   void _updatePhysics() {
-    if (_nodePositions.isEmpty || _draggedNodeId != null) return;
+    if (_nodePositions.isEmpty || _draggedNodeId != null) return; 
+    if (!mounted) return;
 
     setState(() {
       final Map<String, Offset> forces = {};
-      
-      // Tüm düğümler için kuvvet hesapla
       for (final node in widget.nodes) {
         forces[node.id] = Offset.zero;
       }
 
-      // 1. İtme Kuvveti (Düğümler birbirini iter)
+      // 1. İtme Kuvveti (Repulsion) ve 2. Çekim Kuvveti (Attraction) hesaplamaları
       for (int i = 0; i < widget.nodes.length; i++) {
         for (int j = i + 1; j < widget.nodes.length; j++) {
           final node1 = widget.nodes[i];
           final node2 = widget.nodes[j];
-          
           final pos1 = _nodePositions[node1.id];
           final pos2 = _nodePositions[node2.id];
-          
           if (pos1 == null || pos2 == null) continue;
           
           final delta = pos1 - pos2;
-          final distance = max(delta.distance, 10.0); // Minimum mesafe 10
-          
-          // NaN kontrolü
+          final distance = max(delta.distance, 10.0);
           if (distance.isNaN || distance.isInfinite) continue;
           
-          // Coulomb itme kuvveti
           final forceMagnitude = _repulsionStrength / (distance * distance);
           if (forceMagnitude.isNaN || forceMagnitude.isInfinite) continue;
           
@@ -125,7 +156,6 @@ class _MapScreenState extends State<MapScreen> with SingleTickerProviderStateMix
         }
       }
 
-      // 2. Çekim Kuvveti (Bağlantılı düğümler birbirini çeker)
       for (final edge in widget.edges) {
         final source = _nodePositions[edge.sourceId];
         final target = _nodePositions[edge.targetId];
@@ -134,10 +164,8 @@ class _MapScreenState extends State<MapScreen> with SingleTickerProviderStateMix
           final delta = target - source;
           final distance = delta.distance;
           
-          // NaN kontrolü
           if (distance.isNaN || distance.isInfinite) continue;
           
-          // Hooke yay kuvveti
           final force = delta * _attractionStrength * distance;
           
           if (!force.dx.isNaN && !force.dy.isNaN) {
@@ -147,51 +175,39 @@ class _MapScreenState extends State<MapScreen> with SingleTickerProviderStateMix
         }
       }
 
-      // 3. Merkez Çekim Kuvveti (Düğümleri merkeze doğru çeker)
-      final screenWidth = MediaQuery.of(context).size.width;
-      final screenHeight = MediaQuery.of(context).size.height;
-      final center = Offset(screenWidth / 2, screenHeight / 2);
+      // 3. Merkez Çekim Kuvveti (Gravity)
+      final center = Offset(MediaQuery.of(context).size.width / 2, MediaQuery.of(context).size.height / 2);
       
       for (final node in widget.nodes) {
         final pos = _nodePositions[node.id];
         if (pos == null) continue;
-        
         final toCenter = center - pos;
         if (!toCenter.dx.isNaN && !toCenter.dy.isNaN) {
           forces[node.id] = forces[node.id]! + toCenter * _centerForce;
         }
       }
 
-      // Kuvvetleri uygula ve pozisyonları güncelle
+      // Kuvvetleri Uygula ve Pozisyonları Güncelle
       for (final node in widget.nodes) {
-        // Sürüklenen veya sabitlenen düğümleri atla
         if (node.id == _draggedNodeId || _pinnedNodes.contains(node.id)) continue;
-        
         final force = forces[node.id];
-        if (force == null) continue;
+        if (force == null || force.dx.isNaN || force.dy.isNaN) continue;
         
-        // NaN kontrolü
-        if (force.dx.isNaN || force.dy.isNaN) continue;
-        
-        // Hız güncelleme
         final currentVelocity = _nodeVelocities[node.id] ?? Offset.zero;
         final newVelocity = (currentVelocity + force) * _damping;
         
-        // Hız limiti (aşırı hızlanmayı önle)
         final speed = newVelocity.distance;
-        if (speed > 10.0) {  // 50.0 → 10.0 (daha yavaş maksimum hız)
+        if (speed > 10.0) { 
           _nodeVelocities[node.id] = newVelocity / speed * 10.0;
         } else {
           _nodeVelocities[node.id] = newVelocity;
         }
         
-        // Pozisyon güncelleme
         final currentPosition = _nodePositions[node.id];
         if (currentPosition == null) continue;
         
         final newPosition = currentPosition + _nodeVelocities[node.id]!;
         
-        // Pozisyon kontrolü
         if (!newPosition.dx.isNaN && !newPosition.dy.isNaN) {
           _nodePositions[node.id] = newPosition;
         }
@@ -201,8 +217,9 @@ class _MapScreenState extends State<MapScreen> with SingleTickerProviderStateMix
     });
   }
 
-  void _updateBounds() {
-    if (_nodePositions.isEmpty) return;
+  // --- SINIRLARI GÜNCELLEME ---
+  void _updateBounds({bool initial = false}) {
+    if (_nodePositions.isEmpty || !mounted) return;
     
     double minX = double.infinity;
     double maxX = double.negativeInfinity;
@@ -218,43 +235,131 @@ class _MapScreenState extends State<MapScreen> with SingleTickerProviderStateMix
       maxY = max(maxY, pos.dy);
     }
     
-    // Geçerli değerler yoksa varsayılan değerler kullan
+    final screenWidth = MediaQuery.of(context).size.width;
+    final screenHeight = MediaQuery.of(context).size.height;
+    
     if (minX.isInfinite || maxX.isInfinite || minY.isInfinite || maxY.isInfinite) {
-      final screenWidth = MediaQuery.of(context).size.width;
-      final screenHeight = MediaQuery.of(context).size.height;
-      _minX = 0;
-      _maxX = screenWidth;
-      _minY = 0;
-      _maxY = screenHeight;
+      _minX = 0; _maxX = screenWidth; _minY = 0; _maxY = screenHeight;
     } else {
       _minX = minX - _padding;
       _maxX = maxX + _padding;
       _minY = minY - _padding;
       _maxY = maxY + _padding;
     }
+    
+    if (initial) {
+      setState(() {
+        _canvasWidth = max(_maxX - _minX, screenWidth);
+        _canvasHeight = max(_maxY - _minY, screenHeight);
+      });
+    }
   }
+
+
+  // --- KAYDETME İŞLEVİ (POZİSYON KORUMA) ---
+  void _saveMap() async {
+    final List<Map<String, dynamic>> nodesWithPositions = [];
+    
+    for (final node in widget.nodes) {
+        final Offset? currentPosition = _nodePositions[node.id];
+        Map<String, dynamic> nodeJson = node.toJson();
+        
+        // KRİTİK: Düğümün JSON'una güncel X ve Y pozisyonlarını ekle
+        if (currentPosition != null) {
+            nodeJson['x'] = currentPosition.dx;
+            nodeJson['y'] = currentPosition.dy;
+        }
+        nodesWithPositions.add(nodeJson);
+    }
+    
+    final Map<String, dynamic> mapData = {
+        'nodes': nodesWithPositions, 
+        'edges': widget.edges.map((edge) => edge.toJson()).toList()
+    };
+    
+    final String jsonDataString = json.encode(mapData);
+
+    final String title = widget.nodes.isNotEmpty 
+        ? widget.nodes.first.text.substring(0, min(widget.nodes.first.text.length, 30)) 
+        : 'Adsız Harita';
+
+    final MapEntry entry = MapEntry(
+      id: DateTime.now().millisecondsSinceEpoch.toString(), 
+      title: title,
+      timestamp: DateTime.now(),
+      jsonData: jsonDataString,
+    );
+
+    await _storageService.saveMapEntry(entry);
+    
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Harita Başarıyla Kaydedildi: "$title"')),
+      );
+    }
+  }
+
+  // --- EKRANA SIĞDIRMA İŞLEVİ ---
+  void _fitToScreen() {
+    if (!mounted || widget.nodes.isEmpty || _nodePositions.isEmpty) return;
+
+    _updateBounds(initial: true);
+
+    final double viewportWidth = MediaQuery.of(context).size.width;
+    final double viewportHeight = MediaQuery.of(context).size.height;
+
+    final double mapWidth = _maxX - _minX;
+    final double mapHeight = _maxY - _minY;
+
+    if (mapWidth <= 0 || mapHeight <= 0) return;
+
+    final double scaleX = viewportWidth / mapWidth;
+    final double scaleY = viewportHeight / mapHeight;
+    final double finalScale = min(scaleX, scaleY) * 0.95;
+
+    final double mapCenterX = _minX + mapWidth / 2;
+    final double mapCenterY = _minY + mapHeight / 2;
+    
+    final double viewportCenterX = viewportWidth / 2;
+    final double viewportCenterY = viewportHeight / 2;
+
+    final double translateX = viewportCenterX - (mapCenterX * finalScale);
+    final double translateY = viewportCenterY - (mapCenterY * finalScale);
+
+    final Matrix4 matrix = Matrix4.identity()
+      ..translate(translateX, translateY)
+      ..scale(finalScale);
+
+    _transformController.value = matrix;
+  }
+
+
+  // --- HAREKET İŞLEYİCİLERİ ---
 
   void _handleNodeDragStart(String nodeId) {
     setState(() {
       _draggedNodeId = nodeId;
       _nodeVelocities[nodeId] = Offset.zero;
-      _pinnedNodes.add(nodeId); // Düğümü sabitle
+      _pinnedNodes.add(nodeId); 
     });
   }
 
   void _handleNodeDrag(String nodeId, DragUpdateDetails details) {
-    setState(() {
-      final currentPosition = _nodePositions[nodeId]!;
-      _nodePositions[nodeId] = currentPosition + details.delta / _transformController.value.getMaxScaleOnAxis();
-      _nodeVelocities[nodeId] = Offset.zero;
-    });
+    if (_draggedNodeId == nodeId) {
+      setState(() {
+        final currentPosition = _nodePositions[nodeId]!;
+        final double scaleFactor = _transformController.value.getMaxScaleOnAxis(); 
+        
+        _nodePositions[nodeId] = currentPosition + details.delta / scaleFactor;
+        _nodeVelocities[nodeId] = Offset.zero; 
+      });
+    }
   }
 
   void _handleNodeDragEnd(String nodeId) {
     setState(() {
       _draggedNodeId = null;
       _nodeVelocities[nodeId] = Offset.zero;
-      // Düğüm sabitlemeye devam eder, fizik uygulanmaz
     });
   }
   
@@ -281,6 +386,11 @@ class _MapScreenState extends State<MapScreen> with SingleTickerProviderStateMix
         title: const Text('Kavram Haritası'),
         actions: [
           IconButton(
+            icon: const Icon(Icons.save),
+            onPressed: _saveMap,
+            tooltip: 'Haritayı Kaydet',
+          ),
+          IconButton(
             icon: const Icon(Icons.push_pin_outlined),
             tooltip: 'Tüm Sabitlemeleri Kaldır',
             onPressed: () {
@@ -290,21 +400,9 @@ class _MapScreenState extends State<MapScreen> with SingleTickerProviderStateMix
             },
           ),
           IconButton(
-            icon: const Icon(Icons.refresh),
-            tooltip: 'Yeniden Düzenle',
-            onPressed: () {
-              setState(() {
-                _pinnedNodes.clear();
-              });
-              _initializeNodePositions();
-            },
-          ),
-          IconButton(
             icon: const Icon(Icons.zoom_out_map),
             tooltip: 'Sığdır',
-            onPressed: () {
-              _transformController.value = Matrix4.identity();
-            },
+            onPressed: _fitToScreen,
           ),
         ],
       ),
@@ -319,7 +417,7 @@ class _MapScreenState extends State<MapScreen> with SingleTickerProviderStateMix
           height: canvasHeight,
           child: Stack(
             children: [
-              // Bağlantıları çiz
+              // 1. Bağlantıları Çiz (CustomPainter)
               CustomPaint(
                 size: Size(canvasWidth, canvasHeight),
                 painter: MindMapPainter(
@@ -332,7 +430,7 @@ class _MapScreenState extends State<MapScreen> with SingleTickerProviderStateMix
                 ),
               ),
 
-              // Düğümleri çiz
+              // 2. Düğümleri Widget Olarak Çiz (Ön Plan)
               ...widget.nodes.map((node) {
                 final position = _nodePositions[node.id];
                 if (position == null) return const SizedBox.shrink();
@@ -359,6 +457,7 @@ class _MapScreenState extends State<MapScreen> with SingleTickerProviderStateMix
   }
 }
 
+// --- DraggableNode: Sürükleme ve Görünüm ---
 class DraggableNode extends StatelessWidget {
   final ConceptNode node;
   final double nodeRadius;
@@ -441,6 +540,7 @@ class DraggableNode extends StatelessWidget {
   }
 }
 
+// --- MindMapPainter: Bağlantıları Çizme ---
 class MindMapPainter extends CustomPainter {
   final List<ConceptNode> nodes;
   final List<ConceptEdge> edges;
@@ -475,9 +575,8 @@ class MindMapPainter extends CustomPainter {
         
         canvas.drawLine(adjustedSource, adjustedTarget, edgePaint);
 
-        // Ok ucu
         final vector = adjustedTarget - adjustedSource;
-        final length = vector.distance;
+        final double length = vector.distance;
         final direction = length > 0 
             ? Offset(vector.dx / length, vector.dy / length) 
             : Offset.zero;
@@ -487,7 +586,7 @@ class MindMapPainter extends CustomPainter {
         final p1 = arrowPoint - Offset(direction.dy * arrowSize, -direction.dx * arrowSize) * 0.5;
         final p2 = arrowPoint + Offset(direction.dy * arrowSize, -direction.dx * arrowSize) * 0.5;
 
-        final arrowPath = Path()
+        final Path arrowPath = Path()
           ..moveTo(arrowPoint.dx, arrowPoint.dy)
           ..lineTo(p1.dx, p1.dy)
           ..lineTo(p2.dx, p2.dy)

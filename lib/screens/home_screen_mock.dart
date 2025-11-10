@@ -183,17 +183,7 @@ class _HomeScreenMockState extends State<HomeScreenMock> {
       ),
 
       // Alt Navigasyon Çubuğu
-      bottomNavigationBar: BottomNavigationBar(
-        currentIndex: 0, 
-        items: const [
-          BottomNavigationBarItem(icon: Icon(Icons.mic), label: 'Giriş'),
-          BottomNavigationBarItem(icon: Icon(Icons.hub), label: 'Harita'),
-          BottomNavigationBarItem(icon: Icon(Icons.history), label: 'Geçmiş'),
-        ],
-        onTap: (index) {
-          // Navigasyon mantığı (Şimdilik boş)
-        },
-      ),
+
     );
   }
 }
