@@ -1,12 +1,10 @@
 // lib/models/concept_node.dart
 
 class ConceptNode {
-  final String id;        // Düğümün benzersiz kimliği (Örn: "N1")
-  final String text;      // Düğümde gösterilecek kavram veya metin
-  final String type;      // Kavram türü (Örn: "Topic", "Idea", "Action")
-  
-  // Harita görselleştirmesi için pozisyon (şimdilik opsiyonel)
-  final double? x; 
+  final String id;
+  final String text;
+  final String type;
+  final double? x;
   final double? y;
 
   ConceptNode({
@@ -17,14 +15,32 @@ class ConceptNode {
     this.y,
   });
 
-  // LLM'den gelecek JSON verisini Dart objesine çevirme (Factory Constructor)
+  // 🚨 YENİ METOT: Modeli güncelleyip yeni bir nesne oluşturur (Immutability)
+  ConceptNode copyWith({
+    String? id,
+    String? text,
+    String? type,
+    double? x,
+    double? y,
+  }) {
+    return ConceptNode(
+      id: id ?? this.id,
+      text: text ?? this.text,
+      type: type ?? this.type,
+      x: x ?? this.x,
+      y: y ?? this.y,
+    );
+  }
+
+  // LLM'den gelecek JSON verisini Dart objesine çevirme
   factory ConceptNode.fromJson(Map<String, dynamic> json) {
     return ConceptNode(
       id: json['id'] as String,
       text: json['text'] as String,
       type: json['type'] as String,
-      x: json['x'] as double?,
-      y: json['y'] as double?,
+      // JSON'dan gelen x/y değerlerini güvenle double'a çevir
+      x: (json['x'] as num?)?.toDouble(), 
+      y: (json['y'] as num?)?.toDouble(),
     );
   }
 

@@ -2,64 +2,112 @@
 
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:innermap/models/map_entry.dart';
+import 'package:innermap/models/map_entry.dart'; 
+
+// Kullanıcı profili için basit bir model
+class UserProfile {
+  final String username;
+  final String password;
+
+  UserProfile({required this.username, required this.password});
+
+  Map<String, dynamic> toJson() => {'username': username, 'password': password};
+  factory UserProfile.fromJson(Map<String, dynamic> json) => 
+      UserProfile(username: json['username'] as String, password: json['password'] as String);
+}
 
 class StorageService {
-  // Kayıtların tutulacağı anahtar
   static const String _mapEntriesKey = 'innermap_saved_maps';
-
-  // 1. HARİTAYI KAYDETME
+  static const String _usersListKey = 'innermap_users_list'; 
+  
+  // --- HARİTA KAYDETME METODLARI ---
+  
   Future<void> saveMapEntry(MapEntry entry) async {
     final prefs = await SharedPreferences.getInstance();
-    
-    // Mevcut kayıtları oku
-    final String existingJson = prefs.getString(_mapEntriesKey) ?? '[]';
-    List<dynamic> entriesList = json.decode(existingJson);
-    
-    // Yeni kaydı ekle (veya aynı ID varsa üzerine yaz)
-    final existingIndex = entriesList.indexWhere((e) => e['id'] == entry.id);
-    
-    if (existingIndex >= 0) {
-      // Var olan kaydı güncelle
-      entriesList[existingIndex] = entry.toJson();
-    } else {
-      // Yeni kayıt olarak ekle
-      entriesList.add(entry.toJson());
-    }
+    final String currentJson = prefs.getString(_mapEntriesKey) ?? '[]';
+    List<dynamic> currentList = json.decode(currentJson);
 
-    // Güncellenmiş listeyi kaydet
-    await prefs.setString(_mapEntriesKey, json.encode(entriesList));
-    print('Harita Kaydedildi: ${entry.title}');
+    final newEntryJson = entry.toJson();
+    
+    // Var olanı güncelle (ID'ye göre) veya yeni ekle
+    final existingIndex = currentList.indexWhere((e) => e['id'] == entry.id);
+    if (existingIndex >= 0) {
+      currentList[existingIndex] = newEntryJson; // Güncelleme
+    } else {
+      currentList.add(newEntryJson); // Yeni ekleme
+    }
+    
+    final String updatedJson = json.encode(currentList);
+    await prefs.setString(_mapEntriesKey, updatedJson);
   }
 
-  // 2. TÜM KAYITLARI OKUMA (Geçmiş Ekranı İçin)
   Future<List<MapEntry>> loadAllMapEntries() async {
     final prefs = await SharedPreferences.getInstance();
-    final String entriesJson = prefs.getString(_mapEntriesKey) ?? '[]';
-    
+    final String jsonString = prefs.getString(_mapEntriesKey) ?? '[]';
+
     try {
-      List<dynamic> entriesList = json.decode(entriesJson);
-      
-      return entriesList
+      final List<dynamic> jsonList = json.decode(jsonString);
+      return jsonList
           .map((json) => MapEntry.fromJson(json as Map<String, dynamic>))
           .toList();
     } catch (e) {
-      print('Kayıt Okuma Hatası: $e');
+      print('Harita yükleme hatası: $e');
       return [];
     }
   }
 
-  // 3. TEK BİR KAYDI SİLME
   Future<void> deleteMapEntry(String id) async {
     final prefs = await SharedPreferences.getInstance();
-    final String existingJson = prefs.getString(_mapEntriesKey) ?? '[]';
-    List<dynamic> entriesList = json.decode(existingJson);
+    final List<MapEntry> entries = await loadAllMapEntries();
     
-    // İlgili kaydı listeden çıkar
-    entriesList.removeWhere((e) => e['id'] == id);
+    entries.removeWhere((entry) => entry.id == id);
+
+    final List<Map<String, dynamic>> updatedJsonList = 
+        entries.map((entry) => entry.toJson()).toList();
+        
+    final String updatedJson = json.encode(updatedJsonList);
+    await prefs.setString(_mapEntriesKey, updatedJson);
+  }
+  
+  // --- ÇOKLU PROFİL YÖNETİM METODLARI ---
+
+  Future<List<UserProfile>> _loadAllUsers() async {
+    final prefs = await SharedPreferences.getInstance();
+    final String usersJson = prefs.getString(_usersListKey) ?? '[]';
     
-    // Yeni listeyi kaydet
-    await prefs.setString(_mapEntriesKey, json.encode(entriesList));
-    print('Harita Silindi: ID $id');
+    try {
+      List<dynamic> usersList = json.decode(usersJson);
+      return usersList.map((json) => UserProfile.fromJson(json as Map<String, dynamic>)).toList();
+    } catch (e) {
+      return [];
+    }
+  }
+
+  Future<bool> registerUser(String username, String password) async {
+    final prefs = await SharedPreferences.getInstance();
+    List<UserProfile> users = await _loadAllUsers();
+    
+    if (users.any((user) => user.username == username)) {
+      return false; // Kullanıcı adı zaten kullanılıyor
+    }
+    
+    users.add(UserProfile(username: username, password: password));
+    
+    final List<Map<String, dynamic>> usersJsonList = users.map((u) => u.toJson()).toList();
+    await prefs.setString(_usersListKey, json.encode(usersJsonList));
+    
+    return true; // Kayıt başarılı
+  }
+
+  Future<bool> checkUserCredentials(String username, String password) async {
+    List<UserProfile> users = await _loadAllUsers();
+    
+    // Yalnızca kayıtlı kullanıcılar arasında kontrol et
+    return users.any((user) => user.username == username && user.password == password);
+  }
+
+  Future<List<String>> getAllUsernames() async {
+    List<UserProfile> users = await _loadAllUsers();
+    return users.map((u) => u.username).toList();
   }
 }

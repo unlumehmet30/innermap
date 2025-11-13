@@ -1,10 +1,11 @@
 // lib/main.dart
 
 import 'package:flutter/material.dart';
-import 'package:innermap/screens/navigation_shell.dart'; // Yeni navigasyon kabuğu
+import 'package:innermap/screens/login_screen.dart'; 
 
 void main() {
-  WidgetsFlutterBinding.ensureInitialized();
+  // SharedPreferences'ı kullanmak için bu şarttır
+  WidgetsFlutterBinding.ensureInitialized(); 
   runApp(const MyApp());
 }
 
@@ -19,8 +20,8 @@ class MyApp extends StatelessWidget {
         primarySwatch: Colors.blue,
         useMaterial3: false, 
       ),
-      // Uygulamanın giriş noktasını navigasyon kabuğu yapıyoruz.
-      home: const NavigationShell(), 
+      // 🚨 Uygulamanın giriş noktası LoginScreen olarak ayarlandı
+      home: const LoginScreen(), 
     );
   }
 }

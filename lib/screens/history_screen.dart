@@ -19,7 +19,6 @@ class HistoryScreen extends StatefulWidget {
 class _HistoryScreenState extends State<HistoryScreen> {
   final StorageService _storageService = StorageService();
   
-  // Kaydedilen haritaları tutacak liste
   late Future<List<MapEntry>> _futureMapEntries;
 
   @override
@@ -41,6 +40,8 @@ class _HistoryScreenState extends State<HistoryScreen> {
       final Map<String, dynamic> data = json.decode(entry.jsonData);
       
       // 2. Map'i ConceptNode/Edge Listelerine Çevir
+      
+      // KRİTİK: JSON listesini Dart modellerine çevir
       final List<ConceptNode> nodes = (data['nodes'] as List)
           .map((item) => ConceptNode.fromJson(item as Map<String, dynamic>))
           .toList();
@@ -50,10 +51,17 @@ class _HistoryScreenState extends State<HistoryScreen> {
           .toList();
           
       // 3. MapScreen'e Yönlendir
+      // 🚨 KRİTİK: Kayıtlı ID'yi ve Başlığı MapScreen'e gönderiyoruz, 
+      // böylece MapScreen Save butonuna basıldığında bu kaydın üzerine yazar.
       Navigator.push(
         context,
         MaterialPageRoute(
-          builder: (_) => MapScreen(nodes: nodes, edges: edges),
+          builder: (_) => MapScreen(
+            nodes: nodes, 
+            edges: edges,
+            mapId: entry.id,        // Kaydın ID'sini gönder
+            mapTitle: entry.title,  // Başlığını gönder
+          ),
         ),
       );
       
@@ -86,7 +94,6 @@ class _HistoryScreenState extends State<HistoryScreen> {
               itemBuilder: (context, index) {
                 final entry = entries[index];
                 
-                // Tarihi daha okunur hale getirme
                 final formattedDate = DateFormat('dd MMM yyyy, HH:mm').format(entry.timestamp);
 
                 return ListTile(

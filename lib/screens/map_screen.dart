@@ -12,11 +12,17 @@ import 'dart:convert';
 class MapScreen extends StatefulWidget {
   final List<ConceptNode> nodes;
   final List<ConceptEdge> edges;
+  
+  // Kayıtlı haritadan geliyorsa ID ve Başlık buraya gelir.
+  final String? mapId; 
+  final String? mapTitle;
 
   const MapScreen({
     super.key,
     required this.nodes,
     required this.edges,
+    this.mapId,       
+    this.mapTitle,    
   });
 
   @override
@@ -31,7 +37,7 @@ class _MapScreenState extends State<MapScreen> with SingleTickerProviderStateMix
   double _canvasHeight = 0;
   final StorageService _storageService = StorageService(); 
 
-  // Fiziksel hareket ve etkileşim için gereken diğer değişkenler
+  // Fiziksel hareket ve etkileşim için kalan değişkenler
   final Map<String, Offset> _nodeVelocities = {};
   final Set<String> _pinnedNodes = {};
   late AnimationController _animationController;
@@ -47,7 +53,6 @@ class _MapScreenState extends State<MapScreen> with SingleTickerProviderStateMix
   @override
   void initState() {
     super.initState();
-    // Fizik motoru animasyonu
     _animationController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 32),
@@ -55,8 +60,7 @@ class _MapScreenState extends State<MapScreen> with SingleTickerProviderStateMix
     
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _initializeNodePositions();
-      // Fizik motorunu başlatmak için (istenirse aktif edilebilir)
-      // _animationController.repeat(); 
+      // _animationController.repeat(); // Fizik motorunu başlatmak için
     });
   }
 
@@ -66,8 +70,7 @@ class _MapScreenState extends State<MapScreen> with SingleTickerProviderStateMix
     _transformController.dispose();
     super.dispose();
   }
-  
-  // --- Yardımcı Fonksiyon: Başlangıç Pozisyonlarını Hesaplama (POZİSYON KORUMA) ---
+
   void _initializeNodePositions() {
     if (!mounted || widget.nodes.isEmpty) return;
 
@@ -89,9 +92,9 @@ class _MapScreenState extends State<MapScreen> with SingleTickerProviderStateMix
         
         Offset position;
         
-        // 🚨 YÜKLEME MANTIĞI: Eğer Node objesi kayıtlı X ve Y içeriyorsa (Yüklemeden geliyorsa)
+        // YÜKLEME MANTIĞI: Eğer Node objesi kayıtlı X ve Y içeriyorsa (Yüklemeden geliyorsa)
         if (node.x != null && node.y != null) {
-          position = Offset(node.x!, node.y!); // <-- KAYITLI POZİSYONU KULLAN
+          position = Offset(node.x!, node.y!); // KAYITLI POZİSYONU KULLAN
         } 
         // Kayıtlı pozisyon yoksa, Dairesel Yerleşim kullan (İlk kez üretiliyorsa)
         else if (i == 0) {
@@ -120,18 +123,14 @@ class _MapScreenState extends State<MapScreen> with SingleTickerProviderStateMix
     });
   }
   
-  // --- FİZİK GÜNCELLEME (Kalan Kod) ---
+  // --- FİZİK VE DİĞER FONKSİYONLAR (Aynı Kalır) ---
   void _updatePhysics() {
-    if (_nodePositions.isEmpty || _draggedNodeId != null) return; 
-    if (!mounted) return;
-
+    if (_nodePositions.isEmpty || _draggedNodeId != null || !mounted) return; 
     setState(() {
       final Map<String, Offset> forces = {};
-      for (final node in widget.nodes) {
-        forces[node.id] = Offset.zero;
-      }
-
-      // 1. İtme Kuvveti (Repulsion) ve 2. Çekim Kuvveti (Attraction) hesaplamaları
+      for (final node in widget.nodes) forces[node.id] = Offset.zero;
+      
+      // İtme, Çekim, Merkez Kuvveti hesaplamaları... (Aynı kalır)
       for (int i = 0; i < widget.nodes.length; i++) {
         for (int j = i + 1; j < widget.nodes.length; j++) {
           final node1 = widget.nodes[i];
@@ -139,16 +138,12 @@ class _MapScreenState extends State<MapScreen> with SingleTickerProviderStateMix
           final pos1 = _nodePositions[node1.id];
           final pos2 = _nodePositions[node2.id];
           if (pos1 == null || pos2 == null) continue;
-          
           final delta = pos1 - pos2;
           final distance = max(delta.distance, 10.0);
           if (distance.isNaN || distance.isInfinite) continue;
-          
           final forceMagnitude = _repulsionStrength / (distance * distance);
           if (forceMagnitude.isNaN || forceMagnitude.isInfinite) continue;
-          
           final force = delta / distance * forceMagnitude;
-          
           if (!force.dx.isNaN && !force.dy.isNaN) {
             forces[node1.id] = forces[node1.id]! + force;
             forces[node2.id] = forces[node2.id]! - force;
@@ -159,15 +154,11 @@ class _MapScreenState extends State<MapScreen> with SingleTickerProviderStateMix
       for (final edge in widget.edges) {
         final source = _nodePositions[edge.sourceId];
         final target = _nodePositions[edge.targetId];
-        
         if (source != null && target != null) {
           final delta = target - source;
           final distance = delta.distance;
-          
           if (distance.isNaN || distance.isInfinite) continue;
-          
           final force = delta * _attractionStrength * distance;
-          
           if (!force.dx.isNaN && !force.dy.isNaN) {
             forces[edge.sourceId] = forces[edge.sourceId]! + force;
             forces[edge.targetId] = forces[edge.targetId]! - force;
@@ -175,9 +166,7 @@ class _MapScreenState extends State<MapScreen> with SingleTickerProviderStateMix
         }
       }
 
-      // 3. Merkez Çekim Kuvveti (Gravity)
       final center = Offset(MediaQuery.of(context).size.width / 2, MediaQuery.of(context).size.height / 2);
-      
       for (final node in widget.nodes) {
         final pos = _nodePositions[node.id];
         if (pos == null) continue;
@@ -187,7 +176,6 @@ class _MapScreenState extends State<MapScreen> with SingleTickerProviderStateMix
         }
       }
 
-      // Kuvvetleri Uygula ve Pozisyonları Güncelle
       for (final node in widget.nodes) {
         if (node.id == _draggedNodeId || _pinnedNodes.contains(node.id)) continue;
         final force = forces[node.id];
@@ -217,7 +205,6 @@ class _MapScreenState extends State<MapScreen> with SingleTickerProviderStateMix
     });
   }
 
-  // --- SINIRLARI GÜNCELLEME ---
   void _updateBounds({bool initial = false}) {
     if (_nodePositions.isEmpty || !mounted) return;
     
@@ -228,7 +215,6 @@ class _MapScreenState extends State<MapScreen> with SingleTickerProviderStateMix
     
     for (final pos in _nodePositions.values) {
       if (pos.dx.isNaN || pos.dy.isNaN) continue;
-      
       minX = min(minX, pos.dx);
       maxX = max(maxX, pos.dx);
       minY = min(minY, pos.dy);
@@ -264,7 +250,6 @@ class _MapScreenState extends State<MapScreen> with SingleTickerProviderStateMix
         final Offset? currentPosition = _nodePositions[node.id];
         Map<String, dynamic> nodeJson = node.toJson();
         
-        // KRİTİK: Düğümün JSON'una güncel X ve Y pozisyonlarını ekle
         if (currentPosition != null) {
             nodeJson['x'] = currentPosition.dx;
             nodeJson['y'] = currentPosition.dy;
@@ -279,12 +264,13 @@ class _MapScreenState extends State<MapScreen> with SingleTickerProviderStateMix
     
     final String jsonDataString = json.encode(mapData);
 
-    final String title = widget.nodes.isNotEmpty 
+    final String title = widget.mapTitle ?? (widget.nodes.isNotEmpty 
         ? widget.nodes.first.text.substring(0, min(widget.nodes.first.text.length, 30)) 
-        : 'Adsız Harita';
+        : 'Adsız Harita');
 
+    // KULLANILAN ID: Eğer mapId varsa onu kullan (Güncelleme), yoksa yeni ID oluştur.
     final MapEntry entry = MapEntry(
-      id: DateTime.now().millisecondsSinceEpoch.toString(), 
+      id: widget.mapId ?? DateTime.now().millisecondsSinceEpoch.toString(), 
       title: title,
       timestamp: DateTime.now(),
       jsonData: jsonDataString,
@@ -297,6 +283,20 @@ class _MapScreenState extends State<MapScreen> with SingleTickerProviderStateMix
         SnackBar(content: Text('Harita Başarıyla Kaydedildi: "$title"')),
       );
     }
+  }
+
+  // --- YENİ FİKİR EKLEME AKIŞI ---
+  void _addNewIdea() {
+    // Haritayı kapat ve ana girişe geri dön
+    Navigator.pop(context); 
+    
+    // Kullanıcıya geri bildirim ver
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Yeni fikir için Giriş ekranını kullanın.'),
+        duration: Duration(seconds: 2),
+      ),
+    );
   }
 
   // --- EKRANA SIĞDIRMA İŞLEVİ ---
@@ -383,22 +383,29 @@ class _MapScreenState extends State<MapScreen> with SingleTickerProviderStateMix
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Kavram Haritası'),
+        title: Text(widget.mapTitle ?? 'Kavram Haritası'), 
         actions: [
+          // YENİ FİKİR EKLEME BUTONU
+          IconButton(
+            icon: const Icon(Icons.add), 
+            onPressed: _addNewIdea, 
+            tooltip: 'Yeni Fikir Ekle (Mevcut Haritayı Düzenle)',
+          ),
+          // Kaydet Butonu
           IconButton(
             icon: const Icon(Icons.save),
             onPressed: _saveMap,
             tooltip: 'Haritayı Kaydet',
           ),
+          // Sabitlemeyi Kaldır Butonu
           IconButton(
             icon: const Icon(Icons.push_pin_outlined),
             tooltip: 'Tüm Sabitlemeleri Kaldır',
             onPressed: () {
-              setState(() {
-                _pinnedNodes.clear();
-              });
+              setState(() { _pinnedNodes.clear(); });
             },
           ),
+          // EKRANA SIĞDIR BUTONU
           IconButton(
             icon: const Icon(Icons.zoom_out_map),
             tooltip: 'Sığdır',
@@ -421,12 +428,8 @@ class _MapScreenState extends State<MapScreen> with SingleTickerProviderStateMix
               CustomPaint(
                 size: Size(canvasWidth, canvasHeight),
                 painter: MindMapPainter(
-                  nodes: widget.nodes,
-                  edges: widget.edges,
-                  nodePositions: _nodePositions,
-                  nodeRadius: _nodeRadius,
-                  offsetX: -_minX,
-                  offsetY: -_minY,
+                  nodes: widget.nodes, edges: widget.edges, nodePositions: _nodePositions,
+                  nodeRadius: _nodeRadius, offsetX: -_minX, offsetY: -_minY,
                 ),
               ),
 
@@ -439,9 +442,7 @@ class _MapScreenState extends State<MapScreen> with SingleTickerProviderStateMix
                   left: position.dx - _nodeRadius - _minX,
                   top: position.dy - _nodeRadius - _minY,
                   child: DraggableNode(
-                    node: node,
-                    nodeRadius: _nodeRadius,
-                    isPinned: _pinnedNodes.contains(node.id),
+                    node: node, nodeRadius: _nodeRadius, isPinned: _pinnedNodes.contains(node.id),
                     onDragStart: () => _handleNodeDragStart(node.id),
                     onDrag: (details) => _handleNodeDrag(node.id, details),
                     onDragEnd: () => _handleNodeDragEnd(node.id),
@@ -457,7 +458,7 @@ class _MapScreenState extends State<MapScreen> with SingleTickerProviderStateMix
   }
 }
 
-// --- DraggableNode: Sürükleme ve Görünüm ---
+// --- DraggableNode ve MindMapPainter Sınıfları (Aynı Kalır) ---
 class DraggableNode extends StatelessWidget {
   final ConceptNode node;
   final double nodeRadius;
@@ -480,6 +481,8 @@ class DraggableNode extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    BoxShape nodeShape = node.type.toLowerCase() == 'topic' ? BoxShape.circle : BoxShape.rectangle;
+    
     return GestureDetector(
       onPanStart: (_) => onDragStart(),
       onPanUpdate: onDrag,
@@ -489,20 +492,11 @@ class DraggableNode extends StatelessWidget {
         width: nodeRadius * 2,
         height: nodeRadius * 2,
         decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          color: node.type.toLowerCase() == 'topic'
-              ? Colors.blue.shade600
-              : Colors.green.shade600,
-          border: isPinned 
-              ? Border.all(color: Colors.orange, width: 3)
-              : null,
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.2),
-              blurRadius: 8,
-              offset: const Offset(0, 2),
-            ),
-          ],
+          shape: nodeShape, 
+          borderRadius: nodeShape == BoxShape.rectangle ? BorderRadius.circular(10) : null,
+          color: node.type.toLowerCase() == 'topic' ? Colors.blue.shade600 : Colors.green.shade600,
+          border: isPinned ? Border.all(color: Colors.orange, width: 3) : null,
+          boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.2), blurRadius: 8, offset: const Offset(0, 2))],
         ),
         alignment: Alignment.center,
         child: Stack(
@@ -514,25 +508,14 @@ class DraggableNode extends StatelessWidget {
                   node.text,
                   textAlign: TextAlign.center,
                   style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 12,
-                    fontWeight: node.type.toLowerCase() == 'topic' 
-                        ? FontWeight.bold 
-                        : FontWeight.normal,
+                    color: Colors.white, fontSize: 12,
+                    fontWeight: node.type.toLowerCase() == 'topic' ? FontWeight.bold : FontWeight.normal,
                   ),
                 ),
               ),
             ),
             if (isPinned)
-              Positioned(
-                top: 2,
-                right: 2,
-                child: Icon(
-                  Icons.push_pin,
-                  size: 14,
-                  color: Colors.orange.shade300,
-                ),
-              ),
+              Positioned(top: 2, right: 2, child: Icon(Icons.push_pin, size: 14, color: Colors.orange.shade300)),
           ],
         ),
       ),
@@ -540,7 +523,6 @@ class DraggableNode extends StatelessWidget {
   }
 }
 
-// --- MindMapPainter: Bağlantıları Çizme ---
 class MindMapPainter extends CustomPainter {
   final List<ConceptNode> nodes;
   final List<ConceptEdge> edges;
@@ -550,20 +532,13 @@ class MindMapPainter extends CustomPainter {
   final double offsetY;
 
   MindMapPainter({
-    required this.nodes,
-    required this.edges,
-    required this.nodePositions,
-    required this.nodeRadius,
-    required this.offsetX,
-    required this.offsetY,
+    required this.nodes, required this.edges, required this.nodePositions,
+    required this.nodeRadius, required this.offsetX, required this.offsetY,
   });
 
   @override
   void paint(Canvas canvas, Size size) {
-    final Paint edgePaint = Paint()
-      ..color = Colors.grey.shade400
-      ..strokeWidth = 2.0
-      ..style = PaintingStyle.stroke;
+    final Paint edgePaint = Paint()..color = Colors.grey.shade400..strokeWidth = 2.0..style = PaintingStyle.stroke;
 
     for (final edge in edges) {
       final source = nodePositions[edge.sourceId];
@@ -577,24 +552,16 @@ class MindMapPainter extends CustomPainter {
 
         final vector = adjustedTarget - adjustedSource;
         final double length = vector.distance;
-        final direction = length > 0 
-            ? Offset(vector.dx / length, vector.dy / length) 
-            : Offset.zero;
+        final direction = length > 0 ? Offset(vector.dx / length, vector.dy / length) : Offset.zero;
         final arrowSize = 10.0;
         final arrowPoint = adjustedTarget - direction * nodeRadius;
 
         final p1 = arrowPoint - Offset(direction.dy * arrowSize, -direction.dx * arrowSize) * 0.5;
         final p2 = arrowPoint + Offset(direction.dy * arrowSize, -direction.dx * arrowSize) * 0.5;
 
-        final Path arrowPath = Path()
-          ..moveTo(arrowPoint.dx, arrowPoint.dy)
-          ..lineTo(p1.dx, p1.dy)
-          ..lineTo(p2.dx, p2.dy)
-          ..close();
+        final Path arrowPath = Path()..moveTo(arrowPoint.dx, arrowPoint.dy)..lineTo(p1.dx, p1.dy)..lineTo(p2.dx, p2.dy)..close();
 
-        canvas.drawPath(arrowPath, Paint()
-          ..color = edgePaint.color
-          ..style = PaintingStyle.fill);
+        canvas.drawPath(arrowPath, Paint()..color = edgePaint.color..style = PaintingStyle.fill);
       }
     }
   }
